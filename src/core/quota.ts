@@ -28,12 +28,12 @@ export class QuotaManager {
 
     if (minutesHeld < 1) {
       // Anti-MEV / Flash Loan: Zero quota for first 1 min
-      return { quota: 0, multiplier: 0, reason: "Cold Start (<1m)" };
+      return { quota: 0, multiplier: 0, reason: "Warmup (<1m)" };
     } else if (hoursHeld >= 24) {
       // Full Diamond Hand
       multiplier = 1.0;
     } else {
-      // Ramp Up: Starts at 10% (after 5m), adds ~3.75% per hour to reach 100% at 24h
+      // Ramp Up: Starts at 10% (after 1m), adds ~3.75% per hour to reach 100% at 24h
       // Formula: 0.10 + (0.90 * (hoursHeld / 24))
       multiplier = 0.10 + (0.90 * (hoursHeld / 24));
     }
