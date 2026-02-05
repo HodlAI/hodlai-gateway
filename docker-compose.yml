@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  # The Brain: HODLAI Gateway
+  gateway:
+    build: .
+    image: hodlai/gateway:latest
+    container_name: hodlai_gateway
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET}
+      - UPSTREAM_URL=${UPSTREAM_URL}
+      - UPSTREAM_KEY=${UPSTREAM_KEY}
+    depends_on:
+      - redis
+    networks:
+      - hodl_net
+
+  # The Memory: Redis State Store
+  redis:
+    image: redis:7-alpine
+    container_name: hodlai_redis
+    restart: always
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - hodl_net
+
+networks:
+  hodl_net:
+    driver: bridge
+
+volumes:
+  redis_data:

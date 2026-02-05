@@ -1,0 +1,6 @@
+
+> hodlai-gateway@1.0.0 dev
+> tsx src/index.ts
+
+[Gateway] Starting on port 3001...
+[State] Redis connection failed, falling back to In-Memory. 
