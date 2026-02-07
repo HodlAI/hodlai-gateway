@@ -73,7 +73,7 @@ def main():
     }
     
     payload = {
-        "model": "gpt-4o",
+        "model": "gemini-3-flash-preview", # Free Tier (500/day). Use "gpt-4o" for Premium.
         "messages": [
             {"role": "system", "content": "You are a crypto-native AI."},
             {"role": "user", "content": "What is 'Holding is Access'?"}
