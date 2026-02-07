@@ -125,7 +125,32 @@ const PRICING_RULES: Array<{ pattern: RegExp, cost: number }> = [
   
   // --- Tier 4: Micro/Tiny (0.1 Credit per request) ---
   { pattern: /.*(8b|7b|1b|3b|nano|micro).*/, cost: 0.1 },
+  // --- Tier 5: Free (0 Credit) ---
+  { pattern: /^(gemini-3-flash-preview).*/, cost: 0 },
 ];
+
+// Rate Limit Map for Free Models (Simple In-Memory)
+const freeUsage = new Map<string, { count: number, resetAt: number }>();
+
+function checkFreeLimit(wallet: string): boolean {
+  const now = Date.now();
+  const resetTime = 24 * 60 * 60 * 1000; // 24 Hours
+  
+  let record = freeUsage.get(wallet);
+  
+  if (!record || now > record.resetAt) {
+    // Reset if new or expired
+    record = { count: 0, resetAt: now + resetTime };
+    freeUsage.set(wallet, record);
+  }
+  
+  if (record.count >= 500) {
+    return false; // Limit Reached
+  }
+  
+  record.count++;
+  return true; // Allowed
+}
 
 const DEFAULT_COST = 10; // Fallback to premium if unknown
 
@@ -146,10 +171,24 @@ app.post('/v1/chat/completions', async (c) => {
   // 1. Calculate Cost (Per Request)
   const cost = getCost(model);
 
+  // 1.5 Handle Free Tier Limits (gemini-3-flash-preview)
+  if (cost === 0 && model === 'gemini-3-flash-preview') {
+    const wallet = c.get('wallet') as string;
+    const allowed = checkFreeLimit(wallet);
+    if (!allowed) {
+      return c.json({ 
+        error: { 
+          message: 'Free Tier Limit Reached (500/day). Please hold $HODLAI to access paid models.' 
+        } 
+      }, 429);
+    }
+  }
+
   // 2. Pre-flight Check (Double check balance to prevent negative)
   const wallet = c.get('wallet') as string;
   const currentBal = await state.getBalance(wallet);
-  if (currentBal < cost) {
+  // Only check balance if cost > 0
+  if (cost > 0 && currentBal < cost) {
      return c.json({ error: { message: `Insufficient Quota. Required: ${cost} Credits, Available: ${currentBal} Credits. Hold more HODLAI.` } }, 402);
   }
 
