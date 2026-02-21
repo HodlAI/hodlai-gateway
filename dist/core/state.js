@@ -32,18 +32,28 @@ class QuotaService {
         }
     }
     async refreshQuota(wallet, dailyLimitUSD) {
+        // Determine start of current day in UTC
+        const now = new Date();
+        const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).getTime();
         if (this.redis) {
             const key = this.KEY_PREFIX + wallet;
-            const exists = await this.redis.exists(key);
-            if (!exists) {
+            const tsKey = this.KEY_PREFIX + wallet + ':last_update';
+            const lastUpdate = await this.redis.get(tsKey);
+            // If no quota or it's a new day, grant full quota
+            if (!lastUpdate || parseInt(lastUpdate) < startOfDay) {
                 await this.redis.set(key, dailyLimitUSD, 'EX', 86400);
+                await this.redis.set(tsKey, Date.now().toString(), 'EX', 86400);
+            }
+            else {
+                // Just track it, but dont override if they are actively spending today
             }
         }
         else {
-            // Memory
-            if (!this.memoryStore.has(wallet)) {
+            // Memory Fallback
+            if (!this.memoryStore.has(wallet + "_ts") || this.memoryStore.get(wallet + "_ts") < startOfDay) {
                 this.memoryStore.set(wallet, dailyLimitUSD);
-                console.log(`[State] Memory: Refreshed quota for ${wallet}: $${dailyLimitUSD}`);
+                this.memoryStore.set(wallet + "_ts", Date.now());
+                console.log(`[State] Memory: Refreshed daily quota for ${wallet} to ${dailyLimitUSD}`);
             }
         }
     }

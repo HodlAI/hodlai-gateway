@@ -29,17 +29,28 @@ export class QuotaService {
   }
 
   async refreshQuota(wallet: string, dailyLimitUSD: number) {
+    const now = Date.now();
+    const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000; // Exact 24 hours rolling window
+    
     if (this.redis) {
       const key = this.KEY_PREFIX + wallet;
-      const exists = await this.redis.exists(key);
-      if (!exists) {
-        await this.redis.set(key, dailyLimitUSD, 'EX', 86400);
+      const tsKey = this.KEY_PREFIX + wallet + ':last_update';
+      
+      const lastUpdateStr = await this.redis.get(tsKey);
+      const lastUpdate = lastUpdateStr ? parseInt(lastUpdateStr) : 0;
+      
+      // If no quota or exactly 24 hours have passed since the LAST REFRESH
+      if (!lastUpdate || (now - lastUpdate) >= REFRESH_INTERVAL_MS) {
+        await this.redis.set(key, dailyLimitUSD, 'EX', 86400); // Expires in 24h just in case
+        await this.redis.set(tsKey, now.toString(), 'EX', 86400);
       }
     } else {
-      // Memory
-      if (!this.memoryStore.has(wallet)) {
+      // Memory Fallback
+      const lastUpdate = this.memoryStore.get(wallet + "_ts") || 0;
+      if (!lastUpdate || (now - lastUpdate) >= REFRESH_INTERVAL_MS) {
         this.memoryStore.set(wallet, dailyLimitUSD);
-        console.log(`[State] Memory: Refreshed quota for ${wallet}: $${dailyLimitUSD}`);
+        this.memoryStore.set(wallet + "_ts", now);
+        console.log(`[State] Memory: Refreshed exact 24h rolling quota for ${wallet} to ${dailyLimitUSD}`);
       }
     }
   }
