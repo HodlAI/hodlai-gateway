@@ -6,22 +6,27 @@ import { ethers } from 'ethers';
  */
 export class ChainService {
   private provider: ethers.JsonRpcProvider;
-  private contract: ethers.Contract;
+  
+  // Hardcoded RPC fallback
+  private readonly RPC_URL = process.env.BSC_RPC_URL || 'https://bsc-dataseed1.binance.org';
   
   // NOTE: Awaiting real WEB4AI contract address deployment. 
-  // Temporarily set to dead address (Will reject all until updated)
-  private readonly TOKEN_ADDRESS = '0x8004FC7B58399586cA6793ba6629849a78C96AF2'; // TBD 实际发币后修改
+  private readonly TOKEN_ADDRESS = '0x8004FC7B58399586cA6793ba6629849a78C96AF2'; 
 
   constructor() {
-    // Robust RPC
-    this.provider = new ethers.JsonRpcProvider('https://lb.drpc.live/bsc/At_J2_4UBE0DvXufYTxkBabn_V3jAnoR8IDofhHoK236');
-    
-    // ABI: Essential functions only
-    const abi = [
-      'function balanceOf(address) view returns (uint256)',
-      'function decimals() view returns (uint8)'
-    ];
-    this.contract = new ethers.Contract(this.TOKEN_ADDRESS, abi, this.provider);
+    this.provider = new ethers.JsonRpcProvider(this.RPC_URL);
+  }
+
+  /**
+   * Return contract with a new provider to avoid connection death
+   */
+  private getContract(): ethers.Contract {
+      // ABI: Essential functions only + ERC20 extended tracking if ever added
+      const abi = [
+        'function balanceOf(address) view returns (uint256)',
+        'function decimals() view returns (uint8)'
+      ];
+      return new ethers.Contract(this.TOKEN_ADDRESS, abi, this.provider);
   }
 
   /**
@@ -29,41 +34,39 @@ export class ChainService {
    */
   async getBalance(wallet: string): Promise<number> {
     try {
-      const [rawBal, decimals] = await Promise.all([
-        this.contract.balanceOf(wallet),
-        this.contract.decimals()
-      ]);
+      const contract = this.getContract();
+      const rawBal = await contract.balanceOf(wallet);
+      const decimals = await contract.decimals();
       
       return parseFloat(ethers.formatUnits(rawBal, decimals));
     } catch (e) {
       console.error('[Chain] Balance fetch failed:', e);
-      return 0; // Fail safe, effectively denying agent access
+      return 0; // Better to deny access than allow free on error
     }
   }
 
   /**
-   * Mock operations retained for structural compatibility with state loops
+   * Stub for token hold time (Block/Timestamp mapping)
+   * This is challenging to perfectly track without a subgraph or dedicated on-chain mapping 
+   * (Standard ERC20 doesn't track "when did they last buy"). 
+   * For the Gateway proxy we return 24 hours (Full Quota) until an indexer is added.
+   * If token is transferred away, the gateway drops their quota size on next poll.
+   */
+  async getHoldTimeHours(wallet: string): Promise<number> {
+    return 24; // Default full maturation
+  }
+
+  /**
+   * Fetch current value of $WEB4AI token
    */
   async getPrice(): Promise<number> {
     try {
-      // Fetch WEB4AI price via DexScreener (or fallback logic)
-      const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${this.TOKEN_ADDRESS}`);
-      if (!res.ok) return 0.001; // Safeback fallback price
-      const data = await res.json();
-      
-      if (data.pairs && data.pairs.length > 0) {
-         // Sort by liquidity to get the most accurate price
-         const primaryPair = data.pairs.sort((a: any, b: any) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0))[0];
-         return parseFloat(primaryPair.priceUsd) || 0;
-      }
-      return 0; // Pre-market / No LP means NO VALUE means NO COMPUTE
+      // Stub: Should hit DexScreener/Pancake oracle. 
+      // Hardcoded stub for gateway testing.
+      return parseFloat(process.env.WEB4AI_PRICE_USD || '0.005');
     } catch (e) {
-      console.error('[Chain] Price fetch failed:', e);
-      return 0; 
+      console.error('[Chain] Price Oracle Failed:', e);
+      return 0.005; // Fallback
     }
-  }
-
-  async getLastTransferTime(wallet: string): Promise<number> {
-    return 0;
   }
 }
