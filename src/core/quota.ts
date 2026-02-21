@@ -37,8 +37,6 @@ export class QuotaManager {
           percentAvailable = 0.0;
       } else {
           // Base 10% at 5 mins + 4% for every full hour
-          // E.g., 1 hour = 10% + 4% = 14%
-          // E.g., 24 hours = 10% + (24 * 4)% = 106% (Cap at 100)
           percentAvailable = 0.10 + (Math.floor(heldTimeHours) * 0.04);
           if (percentAvailable > 1.0) percentAvailable = 1.0;
       }
@@ -48,7 +46,7 @@ export class QuotaManager {
       return {
           quota: grantedQuota,
           multiplier: percentAvailable,
-          reason: \`Diamond Hand: \${(percentAvailable*100).toFixed(0)}% (Held: \${heldTimeHours.toFixed(1)}h, Max: $\${MAX_QUOTA.toFixed(2)})\`
+          reason: `Diamond Hand: ${(percentAvailable*100).toFixed(0)}% (Held: ${heldTimeHours.toFixed(1)}h, Max: $${MAX_QUOTA.toFixed(2)})`
       };
   }
 }

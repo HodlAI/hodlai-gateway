@@ -32,28 +32,26 @@ class QuotaService {
         }
     }
     async refreshQuota(wallet, dailyLimitUSD) {
-        // Determine start of current day in UTC
-        const now = new Date();
-        const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).getTime();
+        const now = Date.now();
+        const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000; // Exact 24 hours rolling window
         if (this.redis) {
             const key = this.KEY_PREFIX + wallet;
             const tsKey = this.KEY_PREFIX + wallet + ':last_update';
-            const lastUpdate = await this.redis.get(tsKey);
-            // If no quota or it's a new day, grant full quota
-            if (!lastUpdate || parseInt(lastUpdate) < startOfDay) {
-                await this.redis.set(key, dailyLimitUSD, 'EX', 86400);
-                await this.redis.set(tsKey, Date.now().toString(), 'EX', 86400);
-            }
-            else {
-                // Just track it, but dont override if they are actively spending today
+            const lastUpdateStr = await this.redis.get(tsKey);
+            const lastUpdate = lastUpdateStr ? parseInt(lastUpdateStr) : 0;
+            // If no quota or exactly 24 hours have passed since the LAST REFRESH
+            if (!lastUpdate || (now - lastUpdate) >= REFRESH_INTERVAL_MS) {
+                await this.redis.set(key, dailyLimitUSD, 'EX', 86400); // Expires in 24h just in case
+                await this.redis.set(tsKey, now.toString(), 'EX', 86400);
             }
         }
         else {
             // Memory Fallback
-            if (!this.memoryStore.has(wallet + "_ts") || this.memoryStore.get(wallet + "_ts") < startOfDay) {
+            const lastUpdate = this.memoryStore.get(wallet + "_ts") || 0;
+            if (!lastUpdate || (now - lastUpdate) >= REFRESH_INTERVAL_MS) {
                 this.memoryStore.set(wallet, dailyLimitUSD);
-                this.memoryStore.set(wallet + "_ts", Date.now());
-                console.log(`[State] Memory: Refreshed daily quota for ${wallet} to ${dailyLimitUSD}`);
+                this.memoryStore.set(wallet + "_ts", now);
+                console.log(`[State] Memory: Refreshed exact 24h rolling quota for ${wallet} to ${dailyLimitUSD}`);
             }
         }
     }

@@ -31,15 +31,16 @@ app.post('/v1/auth/verify', async (c) => {
     if (!message.includes('Chain ID: 56')) {
         return c.json({ error: 'Only BSC (Chain ID: 56) is supported for WEB4AI.' }, 400);
     }
-    const [balance, price] = await Promise.all([
+    const [balance, price, holdTime] = await Promise.all([
         chain.getBalance(wallet),
-        chain.getPrice()
+        chain.getPrice(),
+        chain.getHoldTimeHours(wallet)
     ]);
     if (balance <= 0) {
         console.warn(`[Blocked] Entity ${wallet} attempted access without WEB4AI tokens.`);
         return c.json({ error: 'Access Denied: Agent requires WEB4AI tokens.' }, 403);
     }
-    const entitlement = quota_1.QuotaManager.calculateAgentQuota(balance, price);
+    const entitlement = quota_1.QuotaManager.calculateAgentQuota(balance, price, holdTime);
     await state.refreshQuota(wallet, entitlement.quota);
     console.log(`[Auth] Agent ${wallet} logged in. Balance: ${balance} WEB4AI.`);
     const access_token = await (0, jwt_1.sign)({ sub: wallet, exp: Math.floor(Date.now() / 1000) + 1800 }, JWT_SECRET); // 30 mins
