@@ -45,7 +45,22 @@ export class ChainService {
    * Mock operations retained for structural compatibility with state loops
    */
   async getPrice(): Promise<number> {
-    return 1.0; 
+    try {
+      // Fetch WEB4AI price via DexScreener (or fallback logic)
+      const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${this.TOKEN_ADDRESS}`);
+      if (!res.ok) return 0.001; // Safeback fallback price
+      const data = await res.json();
+      
+      if (data.pairs && data.pairs.length > 0) {
+         // Sort by liquidity to get the most accurate price
+         const primaryPair = data.pairs.sort((a: any, b: any) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0))[0];
+         return parseFloat(primaryPair.priceUsd) || 0;
+      }
+      return 0; // Pre-market / No LP means NO VALUE means NO COMPUTE
+    } catch (e) {
+      console.error('[Chain] Price fetch failed:', e);
+      return 0; 
+    }
   }
 
   async getLastTransferTime(wallet: string): Promise<number> {

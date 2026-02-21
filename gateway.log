@@ -2,30 +2,25 @@
 > hodlai-gateway@1.0.0 start
 > node dist/index.js
 
-[Gateway] Starting on port 3001...
-node:events:497
-      throw er; // Unhandled 'error' event
-      ^
+node:internal/modules/cjs/loader:1386
+  throw err;
+  ^
 
-Error: listen EADDRINUSE: address already in use :::3001
-    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
-    at listenInCluster (node:net:1997:12)
-    at Server.listen (node:net:2102:7)
-    at serve (/root/clawd/workspace/hodlai-gateway/node_modules/@hono/node-server/dist/index.js:601:10)
-    at Object.<anonymous> (/root/clawd/workspace/hodlai-gateway/dist/index.js:166:25)
-    at Module._compile (node:internal/modules/cjs/loader:1706:14)
-    at Object..js (node:internal/modules/cjs/loader:1839:10)
-    at Module.load (node:internal/modules/cjs/loader:1441:32)
-    at Function._load (node:internal/modules/cjs/loader:1263:12)
+Error: Cannot find module 'dotenv/config'
+Require stack:
+- /root/clawd/workspace/hodlai-gateway/dist/index.js
+    at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1025:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1030:22)
+    at Function._load (node:internal/modules/cjs/loader:1192:37)
     at TracingChannel.traceSync (node:diagnostics_channel:328:14)
-Emitted 'error' event on Server instance at:
-    at emitErrorNT (node:net:1976:8)
-    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
-  code: 'EADDRINUSE',
-  errno: -98,
-  syscall: 'listen',
-  address: '::',
-  port: 3001
+    at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+    at Module.require (node:internal/modules/cjs/loader:1463:12)
+    at require (node:internal/modules/helpers:147:16)
+    at Object.<anonymous> (/root/clawd/workspace/hodlai-gateway/dist/index.js:3:1)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14) {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: [ '/root/clawd/workspace/hodlai-gateway/dist/index.js' ]
 }
 
 Node.js v22.22.0

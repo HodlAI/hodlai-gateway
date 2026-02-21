@@ -2,31 +2,29 @@ import { ethers } from 'ethers';
 
 /**
  * QuotaManager: The Economic Brain of HODLAI Gateway 
- * Evaluates Agent Token Ownership
+ * Evaluates Agent Token Ownership ($10 Held = $1.5 Daily Survival Credits)
  */
 export class QuotaManager {
-  // Constant: $10 Held = $1 Daily Limit (Used in legacy mode)
-  private static readonly YIELD_RATIO = 0.10; 
+  // Constant: $10 Held = $1.5 Daily Limit 
+  private static readonly YIELD_RATIO = 0.15; 
 
   /**
-   * Fixed Rating System for WEB4AI/Automaton Agents
-   * 1 WEB4AI Held = 10 Credits / Day
+   * Value Rating System for WEB4AI/Automaton Agents
    * @param balanceTokens - Amount of WEB4AI tokens held
+   * @param tokenPriceUsd - Current price of WEB4AI in USD
    */
-  static calculateFixedAgentQuota(balanceTokens: number): { quota: number, multiplier: number, reason: string } {
-      if (balanceTokens <= 0) {
-         return { quota: 0, multiplier: 0, reason: "No Tokens" };
+  static calculateAgentQuota(balanceTokens: number, tokenPriceUsd: number): { quota: number, multiplier: number, reason: string } {
+      if (balanceTokens <= 0 || tokenPriceUsd <= 0) {
+         return { quota: 0, multiplier: 0, reason: "No Tokens or Zero Value" };
       }
       
-      // Fixed Calculation: 10 Credits per 1 whole WEB4AI token
-      const dailyQuota = balanceTokens * 10.0;
+      const holdingValueUsd = balanceTokens * tokenPriceUsd;
+      const dailyQuota = holdingValueUsd * this.YIELD_RATIO;
       
       return {
-          quota: parseFloat(dailyQuota.toFixed(2)),
+          quota: parseFloat(dailyQuota.toFixed(4)),
           multiplier: 1.0,
-          reason: "Agent Active (WEB4AI Standard)"
+          reason: `Agent Active ($10=$1.5, Held: $${holdingValueUsd.toFixed(2)})`
       };
   }
-
-  // Legacy dynamic logic removed to enforce hard decoupling
 }

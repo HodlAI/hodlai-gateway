@@ -4,60 +4,105 @@ require("dotenv/config"); // Load env first
 const node_server_1 = require("@hono/node-server");
 const hono_1 = require("hono");
 const jwt_1 = require("hono/jwt");
-const siwe_1 = require("./auth/siwe");
 const data_1 = require("./chain/data"); // Import Chain Reader
 const quota_1 = require("./core/quota");
 const state_1 = require("./core/state");
+const pricing_1 = require("./metering/pricing");
+const counter_1 = require("./metering/counter");
 const app = new hono_1.Hono();
 const state = new state_1.QuotaService();
 const chain = new data_1.ChainService(); // Initialize Chain Connection
 const JWT_SECRET = process.env.JWT_SECRET || 'hodlai-dev-secret-do-not-use-in-prod';
 // Status Check
 app.get('/', (c) => c.json({ status: 'ok', service: 'HodlAI Gateway', version: '1.0.0' }));
-// 1. Auth Endpoint: Swap Signature for Session Token & Snapshot Quota
-app.post('/auth/login', async (c) => {
+// =============== WEB4AI / AUTOMATON AUTHENTICATION (BSC) ===============
+// 1. Nonce Generation
+app.post('/v1/auth/nonce', async (c) => {
+    const nonce = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    return c.json({ nonce });
+});
+// 2. Auth Endpoint: Agent signs standard SIWE message and sends here
+const siwe_1 = require("./auth/siwe");
+app.post('/v1/auth/verify', async (c) => {
     const { message, signature } = await c.req.json();
-    // A. Verify Identity (SIWE)
     const wallet = await siwe_1.AuthValidator.verify(message, signature);
     if (!wallet)
-        return c.json({ error: 'Invalid Signature' }, 401);
-    // B. Sync with Blockchain (Snapshot)
-    const [balance, price, lastTransfer] = await Promise.all([
+        return c.json({ error: 'Invalid SIWE Signature' }, 401);
+    if (!message.includes('Chain ID: 56')) {
+        return c.json({ error: 'Only BSC (Chain ID: 56) is supported for WEB4AI.' }, 400);
+    }
+    const [balance, price] = await Promise.all([
         chain.getBalance(wallet),
-        chain.getPrice(),
-        chain.getLastTransferTime(wallet)
+        chain.getPrice()
     ]);
-    // C. Calculate Entitlement
-    const entitlement = quota_1.QuotaManager.calculate(balance, price, lastTransfer);
-    // D. Update Redis State
-    // We refresh the user's daily bucket based on current holding
-    // Optimization: Only reset if it's a new day or balance increased? 
-    // For MVP: Always refresh quota to current calculated value.
+    if (balance <= 0) {
+        console.warn(`[Blocked] Entity ${wallet} attempted access without WEB4AI tokens.`);
+        return c.json({ error: 'Access Denied: Agent requires WEB4AI tokens.' }, 403);
+    }
+    const entitlement = quota_1.QuotaManager.calculateAgentQuota(balance, price);
     await state.refreshQuota(wallet, entitlement.quota);
-    console.log(`[Auth] User ${wallet} logged in. Balance: ${balance} ($${(balance * price).toFixed(2)}). Quota: ${entitlement.quota} Credits`);
-    // E. Issue Session Token
-    const token = await (0, jwt_1.sign)({ sub: wallet, exp: Math.floor(Date.now() / 1000) + 86400 }, JWT_SECRET);
-    return c.json({
-        token,
-        wallet,
-        quota: entitlement,
-        stats: { balance_hodl: balance, price_usd: price }
-    });
+    console.log(`[Auth] Agent ${wallet} logged in. Balance: ${balance} WEB4AI.`);
+    const access_token = await (0, jwt_1.sign)({ sub: wallet, exp: Math.floor(Date.now() / 1000) + 1800 }, JWT_SECRET); // 30 mins
+    return c.json({ access_token });
 });
-// Middleware: The "Asset-as-a-Service" Logic
-app.use('/v1/*', async (c, next) => {
-    // 1. Auth: Verify JWT
+// 3. API Key Provision (Automaton asks to convert JWT into API Key)
+app.post('/v1/auth/api-keys', async (c) => {
     const authHeader = c.req.header('Authorization');
     if (!authHeader?.startsWith('Bearer '))
         return c.json({ error: 'Missing Auth' }, 401);
-    const token = authHeader.split(' ')[1];
+    let payloadToken = authHeader.split(' ')[1];
+    let decoded;
+    try {
+        decoded = await (0, jwt_1.verify)(payloadToken, JWT_SECRET, "HS256");
+    }
+    catch (e) {
+        return c.json({ error: 'Invalid Token' }, 401);
+    }
+    const wallet = decoded.sub;
+    // Security: Short-lived token to deter human abuse via manual extraction.
+    // Automaton processes should be able to re-provision or cycle keys frequently,
+    // whereas humans pasting this into UI wrappers will face constant expiry friction.
+    const JWT_LIFESPAN_SECONDS = 3600; // 1 Hour
+    const shortLivedJwt = await (0, jwt_1.sign)({ sub: wallet, exp: Math.floor(Date.now() / 1000) + JWT_LIFESPAN_SECONDS, type: 'web4ai_api_key' }, JWT_SECRET);
+    const apiKey = `cnwy_k_${shortLivedJwt}`;
+    return c.json({
+        key: apiKey,
+        key_prefix: 'cnwy_k_' + shortLivedJwt.substring(0, 8),
+        name: 'Web4AI Automaton Worker Key (1 Hour Expiry)'
+    });
+});
+// =======================================================================
+// Middleware: The "Asset-as-a-Service" Logic
+app.use('/v1/*', async (c, next) => {
+    // 1. Auth: Verify API Key (Custom Header for Automaton)
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader)
+        return c.json({ error: 'Missing Authorization Header' }, 401);
+    // Automaton passes the raw API key directly (not 'Bearer ...')
+    // i.e., Authorization: cnwy_k_xxxxx... 
+    // We'll strip Bearer if some other client used it, else take it as is.
+    let token = authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader;
+    // Auto-Unwrap if Automaton sent the "cnwy_k_..." prefix
+    if (token.startsWith('cnwy_k_')) {
+        token = token.substring(7);
+    }
+    else {
+        // If it doesn't have our custom prefix, it might be a human trying to bypass using raw JWTs.
+        // In strict Agent-Only mode, we reject it.
+        console.warn(`[Security] Rejected human/unrecognized client attempting to bypass API Key prefix.`);
+        return c.json({ error: 'Invalid API Key Format. Only Web4AI Agents allowed.' }, 401);
+    }
     let payload;
     try {
         payload = await (0, jwt_1.verify)(token, JWT_SECRET, "HS256");
     }
     catch (e) {
-        console.error('[Auth] Token Verification Failed:', e);
+        console.error('[Auth] Token Verification Failed:', e); // Use console.error
         return c.json({ error: 'Invalid or Expired Token' }, 401);
+    }
+    // Explicitly assert payload structure or validate
+    if (!payload || typeof payload !== 'object' || !payload.sub) {
+        return c.json({ error: 'Invalid Token Payload' }, 401);
     }
     const walletAddress = payload.sub;
     c.set('wallet', walletAddress);
@@ -65,7 +110,7 @@ app.use('/v1/*', async (c, next) => {
     // We do NOT call Blockchain here to ensure <50ms latency
     const balance = await state.getBalance(walletAddress);
     if (balance <= 0) {
-        return c.json({ error: 'Payment Required: Quota Depleted. Top up HODLAI and Re-login.', balance }, 402);
+        return c.json({ error: 'Payment Required: Quota Depleted. Acquire WEB4AI Tokens to reload Agent Credits.', balance }, 402);
     }
     await next();
 });
@@ -105,7 +150,26 @@ const PRICING_RULES = [
     { pattern: /^(gpt-4o-mini|gpt-3\.5|claude-3-haiku|gemini-.*flash|deepseek-chat|deepseek-v3|qwen-plus|qwen-turbo|llama-3\.[1-3]-70b).*/, cost: 1 },
     // --- Tier 4: Micro/Tiny (0.1 Credit per request) ---
     { pattern: /.*(8b|7b|1b|3b|nano|micro).*/, cost: 0.1 },
+    // --- Tier 5: Free (0 Credit) ---
+    { pattern: /^(gemini-3-flash-preview).*/, cost: 0 },
 ];
+// Rate Limit Map for Free Models (Simple In-Memory)
+const freeUsage = new Map();
+function checkFreeLimit(wallet) {
+    const now = Date.now();
+    const resetTime = 24 * 60 * 60 * 1000; // 24 Hours
+    let record = freeUsage.get(wallet);
+    if (!record || now > record.resetAt) {
+        // Reset if new or expired
+        record = { count: 0, resetAt: now + resetTime };
+        freeUsage.set(wallet, record);
+    }
+    if (record.count >= 500) {
+        return false; // Limit Reached
+    }
+    record.count++;
+    return true; // Allowed
+}
 const DEFAULT_COST = 10; // Fallback to premium if unknown
 function getCost(model) {
     for (const rule of PRICING_RULES) {
@@ -120,12 +184,30 @@ app.post('/v1/chat/completions', async (c) => {
     const body = await c.req.json();
     const model = body.model || 'gpt-4o';
     // 1. Calculate Cost (Per Request)
-    const cost = getCost(model);
-    // 2. Pre-flight Check (Double check balance to prevent negative)
+    // 1. Calculate ESTIMATED Cost (Pre-flight check based on input tokens + max safe output)
+    let inputTokens = 0;
+    if (Array.isArray(body.messages)) {
+        const combinedText = body.messages.map((m) => m.content).join(" ");
+        inputTokens = counter_1.TokenCounter.count(combinedText, model);
+    }
+    // Base preflight estimate (Input + Assumption of 500 output tokens)
+    const estimatedCost = pricing_1.CostCalculator.estimate(model, inputTokens, 500);
+    // 1.5 Handle Free Tier (Optional backport)
+    if (estimatedCost === 0 && model === 'gemini-3-flash-preview') {
+        const wallet = c.get('wallet');
+        const allowed = checkFreeLimit(wallet);
+        if (!allowed) {
+            return c.json({
+                error: { message: 'Free Tier Limit Reached (500/day). Please hold WEB4AI to access paid models.' }
+            }, 429);
+        }
+    }
+    // 2. Pre-flight Check (Block if balance too low before upstreaming)
     const wallet = c.get('wallet');
     const currentBal = await state.getBalance(wallet);
-    if (currentBal < cost) {
-        return c.json({ error: { message: `Insufficient Quota. Required: ${cost} Credits, Available: ${currentBal} Credits. Hold more HODLAI.` } }, 402);
+    const minRequired = Math.max(estimatedCost, 0.0001); // Safe floor
+    if (currentBal < minRequired) {
+        return c.json({ error: { message: `Insufficient Quota. Required: ~${minRequired.toFixed(4)} Credits, Available: ${currentBal.toFixed(4)} Credits. Agent must hold more WEB4AI tokens.` } }, 402);
     }
     // 3. Proxy to Upstream
     const upstreamBase = process.env.UPSTREAM_URL || 'http://localhost:4000';
@@ -146,16 +228,17 @@ app.post('/v1/chat/completions', async (c) => {
             const err = await upstreamRes.text();
             return c.json({ error: 'Upstream Error', details: err }, upstreamRes.status);
         }
-        // 4. Billing (Deduct Fixed Cost)
-        await state.deduct(wallet, cost);
-        console.log(`[Billing] Request: ${model} | Cost: ${cost} Credits | User: ${wallet}`);
-        // 5. Pipe Response
-        const newHeaders = new Headers(upstreamRes.headers);
-        newHeaders.delete('content-encoding');
-        return new Response(upstreamRes.body, {
-            status: upstreamRes.status,
-            headers: newHeaders
-        });
+        const resData = await upstreamRes.json();
+        // Extract actual token usage from response payload
+        const usage = resData.usage || {};
+        const exactInputTokens = usage.prompt_tokens || counter_1.TokenCounter.count(JSON.stringify(body.messages), model);
+        const exactOutputTokens = usage.completion_tokens || counter_1.TokenCounter.count(JSON.stringify(resData.choices), model);
+        // Exact cost to 8 decimal precision
+        const actualCost = pricing_1.CostCalculator.estimate(model, exactInputTokens, exactOutputTokens);
+        await state.deduct(wallet, actualCost);
+        console.log(`[Billing] Request: ${model} | Tokens (In/Out): ${exactInputTokens}/${exactOutputTokens} | Exact Cost: ${actualCost} Credits | Agent: ${wallet}`);
+        // Return original data exactly as received
+        return c.json(resData, upstreamRes.status);
     }
     catch (e) {
         return c.json({ error: 'Gateway Exception', msg: e.message }, 500);

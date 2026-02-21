@@ -1,32 +1,27 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ChainService = void 0;
 const ethers_1 = require("ethers");
-const axios_1 = __importDefault(require("axios"));
 /**
- * Chain Service: The Bridge to Real World Data
- * Fetches On-Chain Balance + Off-Chain Price
+ * Chain Service for Web4AI/Automaton Agents
+ * Validates on-chain identity and token holdings
  */
 class ChainService {
     constructor() {
-        // HODLAI (BSC)
-        this.TOKEN_ADDRESS = '0x987E6269c6B7eA6898221882f11EA16F87B97777';
-        this.PAIR_ADDRESS = '0x233BE6ff451C87D3bde3bAb2A8c0c0CdF872003c';
-        // Robust RPC (Paid/Private Node to avoid Rate Limits)
+        // NOTE: Awaiting real WEB4AI contract address deployment. 
+        // Temporarily set to dead address (Will reject all until updated)
+        this.TOKEN_ADDRESS = '0x8004FC7B58399586cA6793ba6629849a78C96AF2'; // TBD 实际发币后修改
+        // Robust RPC
         this.provider = new ethers_1.ethers.JsonRpcProvider('https://lb.drpc.live/bsc/At_J2_4UBE0DvXufYTxkBabn_V3jAnoR8IDofhHoK236');
         // ABI: Essential functions only
         const abi = [
             'function balanceOf(address) view returns (uint256)',
-            'function decimals() view returns (uint8)',
-            'event Transfer(address indexed from, address indexed to, uint256 value)'
+            'function decimals() view returns (uint8)'
         ];
         this.contract = new ethers_1.ethers.Contract(this.TOKEN_ADDRESS, abi, this.provider);
     }
     /**
-     * Get HODL Balance (Formatted Number)
+     * Get Web4AI Holding Balance
      */
     async getBalance(wallet) {
         try {
@@ -38,56 +33,33 @@ class ChainService {
         }
         catch (e) {
             console.error('[Chain] Balance fetch failed:', e);
-            return 0; // Fail safe
+            return 0; // Fail safe, effectively denying agent access
         }
     }
     /**
-     * Get Real-time Price (USD) from DexScreener
-     * Why API? Faster/Cheaper than on-chain Oracle for memecoins.
+     * Mock operations retained for structural compatibility with state loops
      */
     async getPrice() {
         try {
-            const url = `https://api.dexscreener.com/latest/dex/pairs/bsc/${this.PAIR_ADDRESS}`;
-            const config = { timeout: 5000 }; // 5s timeout
-            const res = await axios_1.default.get(url, config);
-            const price = res.data?.pair?.priceUsd;
-            return price ? parseFloat(price) : 0.003; // Fallback to last known safe price
+            // Fetch WEB4AI price via DexScreener (or fallback logic)
+            const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${this.TOKEN_ADDRESS}`);
+            if (!res.ok)
+                return 0.001; // Safeback fallback price
+            const data = await res.json();
+            if (data.pairs && data.pairs.length > 0) {
+                // Sort by liquidity to get the most accurate price
+                const primaryPair = data.pairs.sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0))[0];
+                return parseFloat(primaryPair.priceUsd) || 0;
+            }
+            return 0; // Pre-market / No LP means NO VALUE means NO COMPUTE
         }
         catch (e) {
-            console.warn('[Chain] Price fetch failed, using fallback');
-            return 0.003;
+            console.error('[Chain] Price fetch failed:', e);
+            return 0;
         }
     }
-    /**
-     * Get Last Outgoing Transfer Time (Diamond Hand Check)
-     * Optimization: We only scan the last 24 hours (approx 28,800 blocks).
-     * If found: User moved tokens recently -> Low multiplier.
-     * If NOT found: User held > 24h -> Max multiplier.
-     */
     async getLastTransferTime(wallet) {
-        try {
-            const provider = this.provider;
-            const currentBlock = await provider.getBlockNumber();
-            // Optimization: Using Paid RPC, we can scan the full 24h range safely.
-            const blocksPerDay = 28800; // ~3s per block on BSC
-            const fromBlock = currentBlock - blocksPerDay;
-            // Filter: Transfer(from, to, value)
-            // We only care if 'from' == wallet (Outgoing)
-            const filter = this.contract.filters.Transfer(wallet, null, null);
-            const logs = await this.contract.queryFilter(filter, fromBlock, currentBlock);
-            if (logs.length > 0) {
-                // Found outgoing transfers. Get the latest one.
-                const lastLog = logs[logs.length - 1];
-                const block = await provider.getBlock(lastLog.blockNumber);
-                return block ? block.timestamp : Math.floor(Date.now() / 1000);
-            }
-            // No transfers in last 24h -> Return timestamp > 24h ago
-            return Math.floor(Date.now() / 1000) - 86401;
-        }
-        catch (e) {
-            console.warn('[Chain] Log scan failed, defaulting to Diamond Hand', e);
-            return Math.floor(Date.now() / 1000) - 86401;
-        }
+        return 0;
     }
 }
 exports.ChainService = ChainService;
