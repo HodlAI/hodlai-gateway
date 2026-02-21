@@ -11,7 +11,7 @@ export class ChainService {
   private readonly RPC_URL = process.env.BSC_RPC_URL || 'https://bsc-dataseed1.binance.org';
   
   // NOTE: Awaiting real WEB4AI contract address deployment. 
-  private readonly TOKEN_ADDRESS = '0x8004FC7B58399586cA6793ba6629849a78C96AF2'; 
+  private readonly TOKEN_ADDRESS = '0xdd0993227bd89c9261eb05b1cb78d58af1ca7777'; 
 
   constructor() {
     this.provider = new ethers.JsonRpcProvider(this.RPC_URL);
