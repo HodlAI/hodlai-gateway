@@ -216,6 +216,12 @@ function getCost(model: string): number {
   }
   return DEFAULT_COST;
 }
+app.get('/v1/credits/balance', async (c) => {
+  const walletAddress = c.get('wallet');
+  const balance = await state.getBalance(walletAddress);
+  return c.json({ balance });
+});
+
 
 // Chat Completions Proxy
 app.post('/v1/chat/completions', async (c) => {
